@@ -19,13 +19,13 @@ input string  TradeComment       = "MartGrid_Edu";
 
 //--- Параметры информационной панели
 input bool    ShowInfoPanel      = true;     // Показывать информационную панель
-input int     PanelX             = 250;       // Отступ по X от правого края
+input int     PanelX             = 270;       // Отступ по X от правого края
 input int     PanelY             = 20;       // Отступ по Y от верхнего края
 input int     PanelFontSize      = 12;        // Размер шрифта панели
 input color   PanelColorTitle    = clrGold;  // Цвет заголовка
 input color   PanelColorNormal   = clrWhite; // Цвет обычного текста
 input color   PanelColorProfit   = clrLime;  // Цвет прибыли
-input color   PanelColorLoss     = clrRed;   // Цвет убытка
+input color   PanelColorLoss     = clrWhite;   // Цвет убытка
 
 //--- Глобальные переменные
 CTrade trade;
@@ -64,8 +64,8 @@ void OnDeinit(const int reason) {
 //| Создание информационной панели                                   |
 //+------------------------------------------------------------------+
 void CreateInfoPanel() {
-   // Создаем 11 меток для информации (уменьшено с 15)
-   for(int i = 0; i < 11; i++) {
+   // Создаем 12 меток для информации (увеличено с 11)
+   for(int i = 0; i < 12; i++) {
       string labelName = panelPrefix + "Label_" + IntegerToString(i);
       
       ObjectCreate(0, labelName, OBJ_LABEL, 0, 0, 0);
@@ -154,6 +154,28 @@ void UpdateInfoPanel() {
       SetPanelText(lineIndex++, "─── АНАЛИЗ ───", PanelColorTitle);
       SetPanelText(lineIndex++, StringFormat("Средняя цена: %.5f", avgPrice), PanelColorNormal);
       SetPanelText(lineIndex++, StringFormat("Цель закрытия: %.5f", tpPrice), PanelColorProfit);
+      
+      // === НОВАЯ СТРОКА: Расстояние до следующей сделки ===
+      double lastPosPrice = GetLastPositionPrice(seriesType);
+      double curPrice = (seriesType == POSITION_TYPE_BUY) ? 
+                        SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
+                        SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      
+      double pointsToNext = 0;
+      if(seriesType == POSITION_TYPE_BUY) {
+         pointsToNext = GridStep - (lastPosPrice - curPrice) / _Point;
+      } else {
+         pointsToNext = GridStep - (curPrice - lastPosPrice) / _Point;
+      }
+      
+      if(seriesCount >= MaxMartingaleSteps) {
+         SetPanelText(lineIndex++, "След. сделка: ЛИМИТ ДОСТИГНУТ", PanelColorLoss);
+      } else if(pointsToNext <= 0) {
+         SetPanelText(lineIndex++, "След. сделка: ГОТОВА К ОТКРЫТИЮ", PanelColorLoss);
+      } else {
+         SetPanelText(lineIndex++, StringFormat("След. сделка через: %.1f п.", pointsToNext), PanelColorNormal);
+      }
+      // === КОНЕЦ НОВОЙ СТРОКИ ===
       
       // Текущая прибыль и расстояние до цели
       double currentProfit = CalculateSeriesProfitInPoints(seriesType);
