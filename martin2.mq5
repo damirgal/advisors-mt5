@@ -3,7 +3,7 @@
 //|                        Только для образовательных целей!         |
 //+------------------------------------------------------------------+
 #property copyright "Investment Analyst (Educational Purpose)"
-#property version   "2.01"
+#property version   "2.04"
 #property strict
 
 #include <Trade\Trade.mqh>
@@ -12,13 +12,24 @@
 input double  InitialLot         = 0.01;     // Базовый лот
 input double  LotMultiplier      = 2.0;      // Множитель Мартингейла
 input int     MaxMartingaleSteps = 5;        // Макс. кол-во удвоений (лимит)
-input int     GridStep           = 100;      // Шаг сетки в пунктах (расстояние между позициями)
-input int     TakeProfit         = 50;      // Общий тейк-профит серии в пунктах
+input int     GridStep           = 50;      // Шаг сетки в пунктах
+input int     TakeProfit         = 15;      // Общий TP серии в пунктах
 input long    MagicNumber        = 789012;   // Уникальный номер советника
 input string  TradeComment       = "MartGrid_Edu";
 
+//--- Параметры информационной панели
+input bool    ShowInfoPanel      = true;     // Показывать информационную панель
+input int     PanelX             = 250;       // Отступ по X от правого края
+input int     PanelY             = 20;       // Отступ по Y от верхнего края
+input int     PanelFontSize      = 12;        // Размер шрифта панели
+input color   PanelColorTitle    = clrGold;  // Цвет заголовка
+input color   PanelColorNormal   = clrWhite; // Цвет обычного текста
+input color   PanelColorProfit   = clrLime;  // Цвет прибыли
+input color   PanelColorLoss     = clrRed;   // Цвет убытка
+
 //--- Глобальные переменные
 CTrade trade;
+string panelPrefix = "MartPanel_"; // Префикс для объектов панели
 
 //+------------------------------------------------------------------+
 //| Инициализация                                                    |
@@ -32,7 +43,172 @@ int OnInit() {
    trade.SetExpertMagicNumber(MagicNumber);
    trade.SetDeviationInPoints(10);
    
+   if(ShowInfoPanel) {
+      CreateInfoPanel();
+   }
+   
    return(INIT_SUCCEEDED);
+}
+
+//+------------------------------------------------------------------+
+//| Деинициализация - удаляем панель                                 |
+//+------------------------------------------------------------------+
+void OnDeinit(const int reason) {
+   if(ShowInfoPanel) {
+      DeleteInfoPanel();
+   }
+   Print("Советник остановлен. Причина: ", reason);
+}
+
+//+------------------------------------------------------------------+
+//| Создание информационной панели                                   |
+//+------------------------------------------------------------------+
+void CreateInfoPanel() {
+   // Создаем 11 меток для информации (уменьшено с 15)
+   for(int i = 0; i < 11; i++) {
+      string labelName = panelPrefix + "Label_" + IntegerToString(i);
+      
+      ObjectCreate(0, labelName, OBJ_LABEL, 0, 0, 0);
+      ObjectSetInteger(0, labelName, OBJPROP_CORNER, CORNER_RIGHT_UPPER);
+      ObjectSetInteger(0, labelName, OBJPROP_XDISTANCE, PanelX);
+      ObjectSetInteger(0, labelName, OBJPROP_YDISTANCE, PanelY + i * 18);
+      ObjectSetInteger(0, labelName, OBJPROP_FONTSIZE, PanelFontSize);
+      ObjectSetString(0, labelName, OBJPROP_FONT, "Consolas");
+      ObjectSetInteger(0, labelName, OBJPROP_SELECTABLE, false);
+      ObjectSetInteger(0, labelName, OBJPROP_HIDDEN, true);
+   }
+   
+   ChartRedraw();
+}
+
+//+------------------------------------------------------------------+
+//| Удаление информационной панели                                   |
+//+------------------------------------------------------------------+
+void DeleteInfoPanel() {
+   int total = ObjectsTotal(0, 0, -1);
+   for(int i = total - 1; i >= 0; i--) {
+      string name = ObjectName(0, i, 0, -1);
+      if(StringFind(name, panelPrefix) == 0) {
+         ObjectDelete(0, name);
+      }
+   }
+   ChartRedraw();
+}
+
+//+------------------------------------------------------------------+
+//| Обновление информационной панели                                 |
+//+------------------------------------------------------------------+
+void UpdateInfoPanel() {
+   if(!ShowInfoPanel) return;
+   
+   ENUM_POSITION_TYPE seriesType;
+   int seriesCount = CountSeriesPositions(seriesType);
+   
+   int lineIndex = 0;
+   
+   // Заголовок
+   SetPanelText(lineIndex++, "═══ MARTINGALE GRID ═══", PanelColorTitle);
+   SetPanelText(lineIndex++, "Symbol: " + _Symbol, PanelColorNormal);
+   SetPanelText(lineIndex++, "", PanelColorNormal);
+   
+   if(seriesCount == 0) {
+      SetPanelText(lineIndex++, "Нет открытых позиций", PanelColorNormal);
+      SetPanelText(lineIndex++, "Ожидание сигнала...", PanelColorNormal);
+   } else {
+      // Информация о серии
+      string typeStr = (seriesType == POSITION_TYPE_BUY) ? "BUY" : "SELL";
+      SetPanelText(lineIndex++, "Серия: " + typeStr + " (" + IntegerToString(seriesCount) + " поз.)", PanelColorNormal);
+      SetPanelText(lineIndex++, "Шаг: " + IntegerToString(seriesCount) + "/" + IntegerToString(MaxMartingaleSteps), PanelColorNormal);
+      SetPanelText(lineIndex++, "", PanelColorNormal);
+      
+      // Расчет средней цены (без вывода списка позиций)
+      double totalVolume = 0;
+      double weightedPrice = 0;
+      
+      for(int i = PositionsTotal() - 1; i >= 0; i--) {
+         ulong ticket = PositionGetTicket(i);
+         if(ticket == 0) continue;
+         
+         if(PositionGetString(POSITION_SYMBOL) == _Symbol && 
+            PositionGetInteger(POSITION_MAGIC) == MagicNumber &&
+            (ENUM_POSITION_TYPE)PositionGetInteger(POSITION_TYPE) == seriesType) {
+            
+            double volume = PositionGetDouble(POSITION_VOLUME);
+            double openPrice = PositionGetDouble(POSITION_PRICE_OPEN);
+            
+            totalVolume += volume;
+            weightedPrice += openPrice * volume;
+         }
+      }
+      
+      // Средняя цена и цель
+      double avgPrice = weightedPrice / totalVolume;
+      double tpPrice = 0;
+      
+      if(seriesType == POSITION_TYPE_BUY) {
+         tpPrice = avgPrice + TakeProfit * _Point;
+      } else {
+         tpPrice = avgPrice - TakeProfit * _Point;
+      }
+      
+      SetPanelText(lineIndex++, "─── АНАЛИЗ ───", PanelColorTitle);
+      SetPanelText(lineIndex++, StringFormat("Средняя цена: %.5f", avgPrice), PanelColorNormal);
+      SetPanelText(lineIndex++, StringFormat("Цель закрытия: %.5f", tpPrice), PanelColorProfit);
+      
+      // Текущая прибыль и расстояние до цели
+      double currentProfit = CalculateSeriesProfitInPoints(seriesType);
+      double currentPrice = (seriesType == POSITION_TYPE_BUY) ? 
+                            SymbolInfoDouble(_Symbol, SYMBOL_BID) : 
+                            SymbolInfoDouble(_Symbol, SYMBOL_ASK);
+      
+      double pointsToTarget = 0;
+      if(seriesType == POSITION_TYPE_BUY) {
+         pointsToTarget = (tpPrice - currentPrice) / _Point;
+      } else {
+         pointsToTarget = (currentPrice - tpPrice) / _Point;
+      }
+      
+      color profitColor = (currentProfit >= 0) ? PanelColorProfit : PanelColorLoss;
+      SetPanelText(lineIndex++, StringFormat("Текущая прибыль: %.1f п.", currentProfit), profitColor);
+      
+      color distanceColor = (pointsToTarget <= 0) ? PanelColorProfit : PanelColorNormal;
+      SetPanelText(lineIndex++, StringFormat("До цели: %.1f п.", pointsToTarget), distanceColor);
+      
+      // Прогресс-бар
+      double progress = 0;
+      if(TakeProfit > 0) {
+         progress = MathMax(0, MathMin(100, (currentProfit / TakeProfit) * 100));
+      }
+      
+      string progressBar = CreateProgressBar(progress);
+      SetPanelText(lineIndex++, StringFormat("Прогресс: %s %.0f%%", progressBar, progress), profitColor);
+   }
+   
+   ChartRedraw();
+}
+
+//+------------------------------------------------------------------+
+//| Установка текста метки                                           |
+//+------------------------------------------------------------------+
+void SetPanelText(int lineIndex, string text, color clr = clrWhite) {
+   string labelName = panelPrefix + "Label_" + IntegerToString(lineIndex);
+   ObjectSetString(0, labelName, OBJPROP_TEXT, text);
+   ObjectSetInteger(0, labelName, OBJPROP_COLOR, clr);
+}
+
+//+------------------------------------------------------------------+
+//| Создание прогресс-бара                                           |
+//+------------------------------------------------------------------+
+string CreateProgressBar(double percent) {
+   int filled = (int)MathRound(percent / 10);
+   int empty = 10 - filled;
+   
+   string bar = "[";
+   for(int i = 0; i < filled; i++) bar += "█";
+   for(int i = 0; i < empty; i++) bar += "░";
+   bar += "]";
+   
+   return bar;
 }
 
 //+------------------------------------------------------------------+
@@ -114,7 +290,7 @@ double CalculateSeriesProfitInPoints(ENUM_POSITION_TYPE seriesType) {
    }
    
    if(totalVolume > 0) {
-      return totalProfitPoints / totalVolume; // Средневзвешенная прибыль в пунктах
+      return totalProfitPoints / totalVolume;
    }
    return 0;
 }
@@ -146,7 +322,6 @@ double CalculateLot(int step) {
       lot *= LotMultiplier;
    }
    
-   // Нормализация
    double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
    double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
@@ -162,6 +337,11 @@ double CalculateLot(int step) {
 //| Основная логика                                                  |
 //+------------------------------------------------------------------+
 void OnTick() {
+   // Обновляем информационную панель
+   if(ShowInfoPanel) {
+      UpdateInfoPanel();
+   }
+   
    ENUM_POSITION_TYPE seriesType;
    int seriesCount = CountSeriesPositions(seriesType);
    
@@ -170,7 +350,6 @@ void OnTick() {
       double lot = CalculateLot(0);
       double price = SymbolInfoDouble(_Symbol, SYMBOL_ASK);
       
-      // Простой сигнал: случайный выбор (в реальности - ваша стратегия)
       bool buySignal = (MathRand() % 2 == 1);
       
       if(buySignal) {
@@ -186,7 +365,6 @@ void OnTick() {
    
    // === СЦЕНАРИЙ 2: Есть позиции - проверяем условия ===
    
-   // 2.1. Проверяем, достигли ли общего тейк-профита серии
    double avgProfitPoints = CalculateSeriesProfitInPoints(seriesType);
    
    if(avgProfitPoints >= TakeProfit) {
@@ -196,7 +374,6 @@ void OnTick() {
       return;
    }
    
-   // 2.2. Проверяем, нужно ли открыть следующую позицию сетки
    if(seriesCount > MaxMartingaleSteps) {
       Print("ДОСТИГНУТ ЛИМИТ ШАГОВ (", MaxMartingaleSteps, "). Новые позиции не открываются.");
       return;
@@ -209,16 +386,14 @@ void OnTick() {
    
    double distancePoints = 0;
    if(seriesType == POSITION_TYPE_BUY) {
-      distancePoints = (lastPrice - currentPrice) / _Point; // Цена упала
+      distancePoints = (lastPrice - currentPrice) / _Point;
    } else {
-      distancePoints = (currentPrice - lastPrice) / _Point; // Цена выросла
+      distancePoints = (currentPrice - lastPrice) / _Point;
    }
    
-   // Если цена ушла против позиции на GridStep пунктов - открываем следующую
    if(distancePoints >= GridStep) {
       double lot = CalculateLot(seriesCount);
       
-      // Проверка маржи - ИСПРАВЛЕННАЯ ВЕРСИЯ
       double marginRequired = 0;
       ENUM_ORDER_TYPE orderType;
       
