@@ -10,7 +10,7 @@
 
 //--- Входные параметры
 input double  InitialLot         = 0.01;     // Базовый лот
-input double  LotMultiplier      = 1.4;      // Множитель Мартингейла
+input double  LotMultiplier      = 2.0;      // Множитель Мартингейла
 input int     MaxMartingaleSteps = 6;        // Макс. кол-во удвоений (лимит)
 input int     GridStep           = 50;      // Шаг сетки в пунктах
 input int     TakeProfit         = 20;      // Общий TP серии в пунктах (базовый)
@@ -18,12 +18,16 @@ input long    MagicNumber        = 789012;   // Уникальный номер 
 input string  TradeComment       = "MartGrid_Edu";
 
 //--- Параметры адаптивного TP
-input int     StepToChangeTP     = 3;        // С какого шага меняется TP (0 = отключено)
-input int     AlternativeTakeProfit = 1;    // Альтернативный TP в пунктах
+input int     StepToChangeTP     = 2;        // С какого шага меняется TP (0 = отключено)
+input int     AlternativeTakeProfit = 3;    // Альтернативный TP в пунктах
+
+//--- Параметры адаптивного множителя
+input int     StepToChangeMultiplier = 2;        // С какого шага меняется множитель (0 = отключено)
+input double  AlternativeMultiplier  = 3.0;      // Альтернативный множитель лота
 
 //--- Параметры информационной панели
 input bool    ShowInfoPanel      = true;     // Показывать информационную панель
-input int     PanelX             = 270;       // Отступ по X от правого края
+input int     PanelX             = 350;       // Отступ по X от правого края
 input int     PanelY             = 20;       // Отступ по Y от верхнего края
 input int     PanelFontSize      = 10;        // Размер шрифта панели
 input color   PanelColorTitle    = clrGold;  // Цвет заголовка
@@ -64,10 +68,17 @@ int OnInit() {
    Print("Макс. шагов удвоения: ", MaxMartingaleSteps);
    Print("Базовый TP серии: ", TakeProfit, " пунктов");
    
-   if(StepToChangeTP > 0) {
+      if(StepToChangeTP > 0) {
       Print("Адаптивный TP: с шага ", StepToChangeTP, " используется TP = ", AlternativeTakeProfit, " пунктов");
    } else {
       Print("Адаптивный TP: отключен");
+   }
+   
+   if(StepToChangeMultiplier > 0) {
+      Print("Адаптивный множитель: с шага ", StepToChangeMultiplier, 
+            " используется множитель = ", AlternativeMultiplier);
+   } else {
+      Print("Адаптивный множитель: отключен (стандартный Мартингейл)");
    }
    
    trade.SetExpertMagicNumber(MagicNumber);
@@ -288,8 +299,19 @@ void UpdateInfoPanel() {
       }
       
       string tpStatus = (currentTP != TakeProfit) ? " (адапт.)" : "";
-      SetPanelText(lineIndex++, StringFormat("TP: %d%s | Объём: %.2f лота", currentTP, tpStatus, totalVolume), PanelColorNormal);
+      // Определяем текущий множитель для следующей сделки
+      double nextMultiplier;
+      string multStatus = "";
+      if(StepToChangeMultiplier > 0 && seriesCount >= StepToChangeMultiplier) {
+         nextMultiplier = AlternativeMultiplier;
+         multStatus = " (адапт.)";
+      } else {
+         nextMultiplier = LotMultiplier;
+      }
       
+      SetPanelText(lineIndex++, StringFormat("TP: %d%s | Объём: %.2f лота | Множитель: %.1f%s", 
+                           currentTP, tpStatus, totalVolume, nextMultiplier, multStatus), PanelColorNormal);
+            
       double avgPrice = weightedPrice / totalVolume;
       double tpPrice = 0;
       
@@ -456,15 +478,24 @@ void CloseAllSeriesPositions() {
 }
 
 //+------------------------------------------------------------------+
-//| Расчет лота для текущего шага                                    |
+//| Расчет лота для текущего шага с учетом альтернативного множителя |
 //+------------------------------------------------------------------+
 double CalculateLot(int step) {
    double lot = InitialLot;
    
    for(int i = 0; i < step && i < MaxMartingaleSteps; i++) {
-      lot *= LotMultiplier;
+      // Определяем, какой множитель использовать
+      double currentMultiplier;
+      if(StepToChangeMultiplier > 0 && i >= StepToChangeMultiplier) {
+         currentMultiplier = AlternativeMultiplier;
+      } else {
+         currentMultiplier = LotMultiplier;
+      }
+      
+      lot *= currentMultiplier;
    }
    
+   // Нормализация
    double minLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MIN);
    double maxLot = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_MAX);
    double lotStep = SymbolInfoDouble(_Symbol, SYMBOL_VOLUME_STEP);
