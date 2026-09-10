@@ -10,7 +10,7 @@
 
 //--- Входные параметры
 input double  InitialLot         = 0.01;     // Базовый лот
-input double  LotMultiplier      = 2.0;      // Множитель Мартингейла
+input double  LotMultiplier      = 1.4;      // Множитель Мартингейла
 input int     MaxMartingaleSteps = 6;        // Макс. кол-во удвоений (лимит)
 input int     GridStep           = 50;      // Шаг сетки в пунктах
 input int     TakeProfit         = 20;      // Общий TP серии в пунктах (базовый)
@@ -18,12 +18,12 @@ input long    MagicNumber        = 789012;   // Уникальный номер 
 input string  TradeComment       = "MartGrid_Edu";
 
 //--- Параметры адаптивного TP
-input int     StepToChangeTP     = 2;        // С какого шага меняется TP (0 = отключено)
-input int     AlternativeTakeProfit = 3;    // Альтернативный TP в пунктах
+input int     StepToChangeTP     = 4;        // С какого шага меняется TP (0 = отключено)
+input int     AlternativeTakeProfit = 5;    // Альтернативный TP в пунктах
 
 //--- Параметры адаптивного множителя
-input int     StepToChangeMultiplier = 2;        // С какого шага меняется множитель (0 = отключено)
-input double  AlternativeMultiplier  = 3.0;      // Альтернативный множитель лота
+input int     StepToChangeMultiplier = 3;        // С какого шага меняется множитель (0 = отключено)
+input double  AlternativeMultiplier  = 1.3;      // Альтернативный множитель лота
 
 //--- Параметры информационной панели
 input bool    ShowInfoPanel      = true;     // Показывать информационную панель
@@ -299,19 +299,21 @@ void UpdateInfoPanel() {
       }
       
       string tpStatus = (currentTP != TakeProfit) ? " (адапт.)" : "";
-      // Определяем текущий множитель для следующей сделки
+            // Определяем множитель для СЛЕДУЮЩЕЙ сделки
+      int nextDealNumber = seriesCount + 1; // Номер следующей сделки
       double nextMultiplier;
       string multStatus = "";
-      if(StepToChangeMultiplier > 0 && seriesCount >= StepToChangeMultiplier) {
+      
+      if(StepToChangeMultiplier > 0 && nextDealNumber >= StepToChangeMultiplier) {
          nextMultiplier = AlternativeMultiplier;
          multStatus = " (адапт.)";
       } else {
          nextMultiplier = LotMultiplier;
       }
       
-      SetPanelText(lineIndex++, StringFormat("TP: %d%s | Объём: %.2f лота | Множитель: %.1f%s", 
+      SetPanelText(lineIndex++, StringFormat("TP: %d%s | vol: %.2f лота | mult: %.2f%s", 
                            currentTP, tpStatus, totalVolume, nextMultiplier, multStatus), PanelColorNormal);
-            
+                         
       double avgPrice = weightedPrice / totalVolume;
       double tpPrice = 0;
       
@@ -484,9 +486,11 @@ double CalculateLot(int step) {
    double lot = InitialLot;
    
    for(int i = 0; i < step && i < MaxMartingaleSteps; i++) {
-      // Определяем, какой множитель использовать
+      // Номер сделки, для которой применяем множитель (2-я, 3-я, 4-я...)
+      int dealNumber = i + 2;
+      
       double currentMultiplier;
-      if(StepToChangeMultiplier > 0 && i >= StepToChangeMultiplier) {
+      if(StepToChangeMultiplier > 0 && dealNumber >= StepToChangeMultiplier) {
          currentMultiplier = AlternativeMultiplier;
       } else {
          currentMultiplier = LotMultiplier;
